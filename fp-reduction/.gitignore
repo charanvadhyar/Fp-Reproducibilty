@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# data and results — never commit these
+data/
+results/
+*.nii
+*.nii.gz
+*.npy
+*.parquet
+
+# environment
+.venv/
+venv/
+*.env
+
+# OS
+.DS_Store
