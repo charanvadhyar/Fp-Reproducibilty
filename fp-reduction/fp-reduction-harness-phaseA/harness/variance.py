@@ -31,20 +31,23 @@ Usage:
 import argparse, math
 import numpy as np
 
-U = 2.0 ** -24  # fp32 unit roundoff
+U_BY_DTYPE = {"float32": 2.0**-24, "float16": 2.0**-11, "float64": 2.0**-53}
+U = U_BY_DTYPE["float32"]  # default; overridden by --dtype
 
 
-def collect_deltas(x):
+def collect_deltas(x, dtype="float32"):
     """
-    Recursive fp32 sum; return the relative rounding error delta_k of each
-    addition. delta_k = (fl(s+x_k) - (s+x_k)) / (s+x_k), with (s+x_k) the
-    exact (fp64) value of that single step's operands.
+    Recursive sum in the given dtype; return the relative rounding error delta_k
+    of each addition, measured against an fp64 exact single step.
+    delta_k = (fl(s+x_k) - (s+x_k)) / (s+x_k).
+    (bf16 omitted here: numpy has no native bf16; measure bf16 on GPU separately.)
     """
+    npdt = getattr(np, dtype)
     deltas = []
-    s = np.float32(0.0)
+    s = npdt(0.0)
     for xk in x:
-        exact_step = np.float64(s) + np.float64(xk)   # exact sum of THIS step
-        fl_step = np.float32(s + xk)                   # rounded fp32 result
+        exact_step = np.float64(s) + np.float64(xk)
+        fl_step = npdt(s + xk)
         if exact_step != 0.0:
             d = (np.float64(fl_step) - exact_step) / exact_step
             deltas.append(float(d))
@@ -58,18 +61,22 @@ def main():
     ap.add_argument("--sums", type=int, default=40)
     ap.add_argument("--kappa", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--dtype", default="float32", choices=["float32", "float16", "float64"])
     args = ap.parse_args()
 
+    global U
+    U = U_BY_DTYPE[args.dtype]
+    npdt = getattr(np, args.dtype)
     rng = np.random.default_rng(args.seed)
     all_d = []
     for i in range(args.sums):
         if args.kappa <= 1:
-            x = (rng.random(args.n).astype(np.float32) + np.float32(0.5))
+            x = (rng.random(args.n).astype(npdt) + npdt(0.5))
         else:
-            # mixed-sign data to raise conditioning
-            x = ((rng.random(args.n) * 2 - 1).astype(np.float32))
-        all_d.append(collect_deltas(x))
+            x = ((rng.random(args.n) * 2 - 1).astype(npdt))
+        all_d.append(collect_deltas(x, args.dtype))
     d = np.concatenate(all_d)
+    print(f"dtype = {args.dtype}")
 
     mean = float(d.mean())
     var = float(d.var())
