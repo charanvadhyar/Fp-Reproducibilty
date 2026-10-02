@@ -1,4 +1,23 @@
-﻿__pycache__/
+# Python
+__pycache__/
 *.pyc
+*.pyo
 .ipynb_checkpoints/
+
+# data and large binaries — never commit these
+data/
+*.nii
+*.nii.gz
+*.npy
+*.parquet
+
+# figures (regenerate from results)
 *.png
+
+# environment
+.venv/
+venv/
+*.env
+
+# OS
+.DS_Store
