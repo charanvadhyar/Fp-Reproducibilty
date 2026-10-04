@@ -32,7 +32,7 @@ except ImportError:
 
 from gensum import gensum
 from reference import sum_abs
-from bounds import tau_probabilistic, tau_bernstein, UNIT_ROUNDOFF
+from bounds import tau_probabilistic, tau_bernstein, tau_freedman, SIGMA2_OVER_U2_UNIFORM, UNIT_ROUNDOFF
 import gpu_strategies as gs
 
 
@@ -67,30 +67,31 @@ def main():
     S = sum_abs(x)
     tauH = tau_probabilistic(args.n, u, S, args.alpha)
     tauB = tau_bernstein(args.n, u, S, args.alpha)
+    tauFa = tau_freedman(args.n, u, S, args.alpha, sigma2_over_u2=SIGMA2_OVER_U2_UNIFORM)  # a priori, no measurement
     kern = gs._load()
     x_gpu = cp.asarray(x)
     T = args.trials
 
     props = cp.cuda.runtime.getDeviceProperties(cp.cuda.Device().id)
     print(f"GPU: {props['name'].decode()}   n=2^{int(math.log2(args.n))} kappa={kappa:.3g} alpha={args.alpha:g}")
-    print(f"tau_H={tauH:.3e}  tau_B={tauB:.3e}  (B {tauH/tauB:.2f}x tighter)\n")
+    print(f"tau_H={tauH:.3e}  tau_B={tauB:.3e}  tau_Fa={tauFa:.3e}  (B {tauH/tauB:.2f}x, Fa {tauH/tauFa:.2f}x tighter than H)\n")
 
     def atomic(xg):
         return gs.naive_atomic(xg, args.n, kern)
 
     out = {"gpu": props['name'].decode(), "n": args.n, "kappa": kappa,
-           "alpha": args.alpha, "tauH": tauH, "tauB": tauB}
+           "alpha": args.alpha, "tauH": tauH, "tauB": tauB, "tauFa": tauFa}
 
     # --- benign class: real atomic run-to-run spread (two clean launches) ---
     ben = np.array([abs(atomic(x_gpu) - atomic(x_gpu)) for _ in range(T)])
-    out["fp_H"] = float((ben > tauH).mean()); out["fp_B"] = float((ben > tauB).mean())
+    out["fp_H"] = float((ben > tauH).mean()); out["fp_B"] = float((ben > tauB).mean()); out["fp_Fa"] = float((ben > tauFa).mean())
     out["benign_median"] = float(np.median(ben)); out["benign_max"] = float(ben.max())
     print(f"benign (real atomic spread): median {np.median(ben):.3e}, max {ben.max():.3e}")
-    print(f"false-positive: H={out['fp_H']:.4f}  B={out['fp_B']:.4f}  (alpha {args.alpha:g})\n")
+    print(f"false-positive: H={out['fp_H']:.4f}  B={out['fp_B']:.4f}  Fa={out['fp_Fa']:.4f}  (alpha {args.alpha:g})\n")
 
     # --- fault class 1: input bit-flip, vs a clean atomic run ---
     print("Input bit-flip faults (vs clean atomic run):")
-    print(f"{'bit':>4} {'med diff':>12} {'det_H':>7} {'det_B':>7}")
+    print(f"{'bit':>4} {'med diff':>12} {'det_H':>7} {'det_B':>7} {'det_Fa':>7}")
     out["bitflip"] = []
     Tf = max(T//2, 150)
     for bit in [10, 16, 20, 22, 23, 25, 27, 30]:
@@ -105,13 +106,14 @@ def main():
         if not ds: continue
         ds = np.array(ds)
         r = {"bit": bit, "med": float(np.median(ds)),
-             "det_H": float((ds > tauH).mean()), "det_B": float((ds > tauB).mean())}
+             "det_H": float((ds > tauH).mean()), "det_B": float((ds > tauB).mean()),
+             "det_Fa": float((ds > tauFa).mean())}
         out["bitflip"].append(r)
-        print(f"{bit:>4} {r['med']:>12.3e} {r['det_H']:>7.3f} {r['det_B']:>7.3f}")
+        print(f"{bit:>4} {r['med']:>12.3e} {r['det_H']:>7.3f} {r['det_B']:>7.3f} {r['det_Fa']:>7.3f}")
 
     # --- fault class 2: controlled additive magnitude, sweeping tau_B..tau_H ---
     print("\nControlled additive fault (sweeps the tau_B..tau_H band):")
-    print(f"{'f/tauB':>7} {'f/tauH':>7} {'det_H':>7} {'det_B':>7}")
+    print(f"{'f/tauB':>7} {'f/tauH':>7} {'det_H':>7} {'det_B':>7} {'det_Fa':>7}")
     out["additive"] = []
     for mult in [0.3, 0.6, 1.0, 1.5, 2.0, tauH/tauB, 1.2*tauH/tauB, 3.0]:
         f = mult * tauB
@@ -122,9 +124,10 @@ def main():
             ds.append(abs(atomic(x_gpu) - atomic(cp.asarray(xf))))
         ds = np.array(ds)
         r = {"f": float(f), "f_over_tauB": float(mult), "f_over_tauH": float(f/tauH),
-             "det_H": float((ds > tauH).mean()), "det_B": float((ds > tauB).mean())}
+             "det_H": float((ds > tauH).mean()), "det_B": float((ds > tauB).mean()),
+             "det_Fa": float((ds > tauFa).mean())}
         out["additive"].append(r)
-        print(f"{mult:>7.2f} {f/tauH:>7.2f} {r['det_H']:>7.3f} {r['det_B']:>7.3f}")
+        print(f"{mult:>7.2f} {f/tauH:>7.2f} {r['det_H']:>7.3f} {r['det_B']:>7.3f} {r['det_Fa']:>7.3f}")
 
     # --- ROC on the controlled-additive fault class (where Bernstein's edge shows) ---
     flt = []
@@ -136,11 +139,13 @@ def main():
     flt = np.array(flt)
     pts, auc = roc(ben, flt)
     out["roc"] = {"auc": auc, "tpr_at_tauH": float((flt > tauH).mean()),
-                  "tpr_at_tauB": float((flt > tauB).mean()), "points": pts}
+                  "tpr_at_tauB": float((flt > tauB).mean()),
+                  "tpr_at_tauFa": float((flt > tauFa).mean()), "points": pts}
     print(f"\nROC (fault class spans 0.5..2.5 x tau_B):")
     print(f"  AUC = {auc:.4f}")
     print(f"  TPR at tau_H (FPR~{out['fp_H']:.3f}): {out['roc']['tpr_at_tauH']:.3f}")
     print(f"  TPR at tau_B (FPR~{out['fp_B']:.3f}): {out['roc']['tpr_at_tauB']:.3f}")
+    print(f"  TPR at tau_Fa a-priori (FPR~{out['fp_Fa']:.3f}): {out['roc']['tpr_at_tauFa']:.3f}")
     print(f"  -> Bernstein detects {out['roc']['tpr_at_tauB']-out['roc']['tpr_at_tauH']:+.3f} "
           f"more at ~zero FPR, on REAL GPU nondeterminism")
 
