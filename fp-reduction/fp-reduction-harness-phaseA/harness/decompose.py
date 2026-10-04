@@ -116,32 +116,39 @@ def main():
             F2 = float(np.median(ratios))
 
     # ---- report ----
-    t_measured = float(np.median([r["tightening_factor"] for r in exc]))
-    target = 1.0 / t_measured
-
-    # The DECOMPOSITION is spread-based: F3 is measured from the real SPREAD
-    # quantile (via lam_real), so it already contains the error->spread
-    # conversion. The accounting product is therefore F1 * F3 * F4.
-    # F2 (2*error / spread) is a SEPARATE DIAGNOSTIC, not a factor to multiply
-    # in -- multiplying it would double-count the error-vs-spread gap that F3
-    # already captures.
-    product = F1 * F3 * F4
-
+    # IMPORTANT: do NOT read the stored tightening_factor from the jsonl -- it was
+    # computed at sweep time with whatever tau was then in bounds.py. Recompute
+    # t = (stored spread quantile) / tau_NOW(n) so the decomposition always
+    # compares against the current bound. lambda varies with n (HM Thm 3.1
+    # union bound: sqrt(2 ln(2n/beta))), so closure is checked PER CELL.
+    from bounds import tau_probabilistic
+    F1 = 2.0 / math.sqrt(2.0)
     print(f"\nDecomposition of tau conservatism at kappa={args.kappa:g}, alpha={args.alpha:g}")
-    print("=" * 60)
-    print(f"measured tightening factor t       = {t_measured:.4f}")
-    print(f"  => tau is loose by 1/t           = {target:.2f}x")
+    print("=" * 76)
+    print("lambda now depends on n (union bound over n terms), so the accounting is per cell:")
+    print(f"{'n':>6} {'lam_tau':>8} {'lam_real':>9} {'t=q/tau':>9} {'1/t':>7} {'F1*F3':>7} {'ratio':>6}")
+    print("-" * 60)
+    ratios=[]; ts=[]
+    for r in exc:
+        n=r["n"]; S=r["sum_abs"]; q=r["empirical_q_at_1_minus_alpha"]
+        tau_now = tau_probabilistic(n, u, S, args.alpha)
+        t = q / tau_now
+        lam_tau_n = lambda_for_alpha(args.alpha/2.0, n, u)
+        lam_real_n = q / (u*math.sqrt(n)*S)
+        F3_n = (lam_tau_n*math.sqrt(2.0))/lam_real_n
+        pred = F1*F3_n
+        ratio = pred*t          # should be ~1.0 if pred == 1/t
+        ratios.append(ratio); ts.append(t)
+        print(f"2^{int(math.log2(n)):<4} {lam_tau_n:>8.3f} {lam_real_n:>9.3f} {t:>9.4f} {1/t:>7.2f} {pred:>7.2f} {ratio:>6.3f}")
+    print("-" * 60)
+    print(f"median closure ratio (F1*F3 * t) = {float(np.median(ratios)):.3f}   (1.000 = exact)")
+    print(f"t ranges {min(ts):.4f} .. {max(ts):.4f}: mild n-dependence from sqrt(ln n) in lambda;")
+    print(f"lam_real is the flat invariant (~{lam_real:.2f}).")
     print()
-    print(f"lambda used by tau (alpha/2)        = {lam_tau:.3f}")
-    print(f"real spread deviation multiple      = {lam_real:.3f}")
-    print()
-    print("ACCOUNTING (spread-based) -- these multiply to 1/t:")
-    print(f"  F1  two-sided triangle (2/sqrt2)  = {F1:.3f}")
-    print(f"  F3  Hoeffding tail-bound slack    = {F3:.3f}")
-    print(f"  F4  gamma_tilde vs linear         = {F4:.3f}")
-    print(f"  F1*F3*F4                          = {product:.2f}")
-    print(f"  target (1/t)                      = {target:.2f}")
-    print(f"  product / target                  = {product/target:.3f}   (1.0 = exact)")
+    t_measured = float(np.median(ts)); target = 1.0/t_measured
+    F3 = (float(np.median([lambda_for_alpha(args.alpha/2.0, r['n'], u) for r in exc]))*math.sqrt(2.0))/lam_real
+    product = F1*F3*F4
+    print(f"POOLED (median): F1={F1:.3f} F3={F3:.2f} F4={F4:.3f} -> F1*F3*F4={product:.2f} vs 1/t={target:.2f}")
     print()
     print("DIAGNOSTIC (not in the product -- reported separately):")
     if F2 is not None:
