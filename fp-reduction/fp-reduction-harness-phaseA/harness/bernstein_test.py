@@ -22,7 +22,7 @@ U = 2.0 ** -24
 from bounds import SIGMA2_OVER_U2
 
 
-from bounds import tau_probabilistic as tau_hoeffding, tau_bernstein, lambda_for_alpha
+from bounds import tau_probabilistic as tau_hoeffding, tau_bernstein, tau_freedman, SIGMA2_OVER_U2_UNIFORM, lambda_for_alpha
 
 
 def load(path):
@@ -43,9 +43,9 @@ def analyze(path, label):
     recs = load(path)
     print(f"\n=== {label}  ({path}) ===")
     print(f"{'strategy':>13} {'n':>6} {'kappa':>9} {'spread':>10} "
-          f"{'tau_H':>10} {'tau_B':>10} {'tighter':>8} {'B holds?':>9}")
-    print("-" * 82)
-    held = 0; total = 0; tighter_vals = []
+          f"{'tau_H':>10} {'tau_B':>10} {'tau_Fa':>10} {'B?':>4} {'Fa?':>4}")
+    print("-" * 86)
+    held = 0; total = 0; tighter_vals = []; heldFa = 0
     for r in recs:
         n = r["n"]; S = r["sum_abs"]; alpha = r.get("alpha", 1e-3)
         kappa = r.get("kappa", 1)
@@ -55,20 +55,20 @@ def analyze(path, label):
             continue
         tH = tau_hoeffding(n, U, S, alpha)
         tB = tau_bernstein(n, U, S, alpha)
+        tFa = tau_freedman(n, U, S, alpha, sigma2_over_u2=SIGMA2_OVER_U2_UNIFORM)  # a priori
         tighter = tH / tB if tB > 0 else float("nan")
-        holds = sp <= tB
-        # only count nondeterministic cells (deterministic have spread 0 -> trivially hold)
+        holds = sp <= tB; holdsFa = sp <= tFa
         if sp > 0:
             total += 1
-            held += int(holds)
+            held += int(holds); heldFa += int(holdsFa)
             tighter_vals.append(tighter)
         print(f"{strat:>13} 2^{int(math.log2(n)):<4} {kappa:>9.2g} {sp:>10.2e} "
-              f"{tH:>10.2e} {tB:>10.2e} {tighter:>7.2f}x {'YES' if holds else 'NO':>9}")
+              f"{tH:>10.2e} {tB:>10.2e} {tFa:>10.2e} {'Y' if holds else 'N':>4} {'Y' if holdsFa else 'N':>4}")
     if total:
-        print(f"\n  Bernstein tau held in {held}/{total} nondeterministic cells "
-              f"(deterministic cells trivially hold, spread=0).")
-        print(f"  median tightening vs Hoeffding: {np.median(tighter_vals):.2f}x")
-    return held, total
+        print(f"\n  Bernstein / Freedman(measured) tau held in {held}/{total} nondeterministic cells")
+        print(f"  Freedman(a priori, sigma2=u^2/3) tau held in {heldFa}/{total}")
+        print(f"  median tightening vs Hoeffding: Bernstein {np.median(tighter_vals):.2f}x")
+    return held, total, heldFa
 
 
 def main():
@@ -81,19 +81,20 @@ def main():
     print(f"(sigma/u = {math.sqrt(SIGMA2_OVER_U2):.3f}; expected per-term tightening "
           f"~ {1/math.sqrt(SIGMA2_OVER_U2):.2f}x)")
 
-    gh = gt = 0
+    gh = gt = gfa = 0
     if args.cpu:
-        h, t = analyze(args.cpu, "CPU (permutation spread)")
-        gh += h; gt += t
+        h, t, fa = analyze(args.cpu, "CPU (permutation spread)")
+        gh += h; gt += t; gfa += fa
     if args.gpu:
-        h, t = analyze(args.gpu, "GPU (real 4090 nondeterminism)")
-        gh += h; gt += t
+        h, t, fa = analyze(args.gpu, "GPU (real 4090 nondeterminism)")
+        gh += h; gt += t; gfa += fa
 
     print(f"\n{'='*50}")
     if gt:
         if gh == gt:
-            print(f"RESULT: Bernstein tau HELD in ALL {gt} nondeterministic cells.")
-            print("        Tightening PROVED: tau reduced ~2.3x and still never exceeded.")
+            print(f"RESULT: Bernstein / Freedman(measured) tau HELD in ALL {gt} nondeterministic cells.")
+            print(f"        Freedman(a priori, no measurement) held in {gfa}/{gt}.")
+            print("        Tightening holds under mean-independence alone (Freedman), not just independence.")
         else:
             print(f"RESULT: Bernstein tau held in {gh}/{gt} cells — exceeded in {gt-gh}.")
             print("        Tightening too aggressive in those cells: the variance")

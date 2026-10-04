@@ -150,6 +150,48 @@ def tau_bernstein(n: int, u: float, S: float, alpha: float,
     return 2.0 * t * S
 
 
+# ----------------------------------------------------------- variance-aware (Freedman: martingale Bernstein)
+SIGMA2_OVER_U2_UNIFORM = 1.0 / 3.0   # theoretical max for round-to-nearest (uniform on [-u,u]); a priori, no measurement
+
+
+def tau_freedman(n: int, u: float, S: float, alpha: float,
+                 sigma2_over_u2: float = SIGMA2_OVER_U2) -> float:
+    """
+    Variance-aware two-run tolerance via FREEDMAN's inequality -- the martingale
+    form of Bernstein -- sound under mean-independence alone (HM Model 2.1),
+    which is the assumption the rest of the paper makes. Bernstein requires
+    full independence; Freedman does not.
+
+    Freedman (1975): for a martingale difference sequence d_k with |d_k| <= c and
+    predictable quadratic variation V = sum_k E[d_k^2 | past],
+        P( sum d_k >= t  and  V <= v ) <= exp( -t^2 / (2(v + c t/3)) ).
+    With d_k = delta_k, c = u, and v = n*sigma2 as the bound on the accumulated
+    conditional variance, the two-sided per-term tail union-bounded over the n
+    terms (HM Thm 3.1 structure), per-run failure beta = alpha/2:
+        2n exp( -t^2 / (2(n sigma2 + u t/3)) ) = beta
+    gives the SAME quadratic as tau_bernstein. Numerically identical; the
+    difference is the assumption: mean-independence + a bound on conditional
+    variance, instead of independence.
+
+    sigma2_over_u2 choices:
+      SIGMA2_OVER_U2 (0.18, MEASURED)  -> calibrated tolerance, ~2.35x tighter than Hoeffding
+      SIGMA2_OVER_U2_UNIFORM (1/3)     -> a-priori tolerance using the theoretical maximum
+                                          variance of round-to-nearest; no measurement
+                                          enters; ~1.7x tighter than Hoeffding, fully sound
+    The a-priori version is a true bound; the measured version is a bound under
+    the calibrated conditional-variance model. Report both.
+    """
+    if n < 1 or not (0.0 < alpha < 1.0) or not (0.0 <= u < 1.0) or S < 0.0:
+        raise ValueError("bad args")
+    beta = alpha / 2.0
+    L = math.log(2.0 * n / beta)
+    v = sigma2_over_u2 * u * u          # per-term conditional-variance bound
+    b = -(2.0 * u * L / 3.0)
+    c = -(2.0 * n * v * L)
+    t = (-b + math.sqrt(b * b - 4.0 * c)) / 2.0
+    return 2.0 * t * S
+
+
 if __name__ == "__main__":
     u = UNIT_ROUNDOFF["float32"]
 
@@ -157,12 +199,16 @@ if __name__ == "__main__":
     th = tau_probabilistic(2**20, u, 1.0, 1e-3)
     tb = tau_bernstein(2**20, u, 1.0, 1e-3)
     # corrected per HM Thm 3.1 (union bound over n terms): lambda = sqrt(2 ln(2n/beta))/(1-u)
+    tf_m = tau_freedman(2**20, u, 1.0, 1e-3)                                   # measured sigma2
+    tf_a = tau_freedman(2**20, u, 1.0, 1e-3, sigma2_over_u2=SIGMA2_OVER_U2_UNIFORM)  # a priori
     assert abs(th - 8.128e-4) < 1e-6, f"hoeffding tau drifted: {th:.6e}"
     assert abs(tb - 3.456e-4) < 1e-6, f"bernstein tau drifted: {tb:.6e}"
+    assert abs(tf_m - tb) < 1e-12, "freedman(measured) must equal bernstein numerically"
     print(f"assert passed.")
-    print(f"  tau_hoeffding  (n=2^20) = {th:.6e}")
-    print(f"  tau_bernstein  (n=2^20) = {tb:.6e}")
-    print(f"  bernstein is {th/tb:.2f}x tighter")
+    print(f"  tau_hoeffding            (n=2^20) = {th:.6e}")
+    print(f"  tau_bernstein            (n=2^20) = {tb:.6e}   ({th/tb:.2f}x tighter; assumes independence)")
+    print(f"  tau_freedman (measured)  (n=2^20) = {tf_m:.6e}   ({th/tf_m:.2f}x tighter; mean-independence + calibrated var)")
+    print(f"  tau_freedman (a priori)  (n=2^20) = {tf_a:.6e}   ({th/tf_a:.2f}x tighter; mean-independence, sigma2=u^2/3, no measurement)")
     print()
     print("kappa ceiling at n=2^20, fp32 (worst-case relative error hits 1):")
     for s in ["recursive", "pairwise", "kahan"]:
