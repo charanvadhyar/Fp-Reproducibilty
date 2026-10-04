@@ -70,7 +70,9 @@ def main():
 
     # ---- F3: Hoeffding bound-constant looseness ----
     # tau's lambda for the spread (alpha/2 each side) :
-    lam_tau = lambda_for_alpha(args.alpha / 2.0, 1, u)   # ~4.07
+    # per-cell n matters now (HM Thm 3.1 union bound): use each record's n
+    lam_tau_by_n = {r['n']: lambda_for_alpha(args.alpha / 2.0, r['n'], u) for r in exc}
+    lam_tau = float(np.median(list(lam_tau_by_n.values())))   # ~6.6 at n~2^20
     # The REAL spread, in 'natural units' u*sqrt(n)*S, at the (1-alpha) quantile:
     # spread_q ~ lam_real * u * sqrt(n) * S   (ignoring the sqrt2 of two runs, which is F1)
     # so lam_real = spread_q / (u*sqrt(n)*S) / sqrt2 ... we fold sqrt2 into F1, so:

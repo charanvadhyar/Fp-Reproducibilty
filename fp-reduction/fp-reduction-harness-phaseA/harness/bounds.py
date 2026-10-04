@@ -67,15 +67,26 @@ def kappa_ceiling(strategy: str, n: int, u: float) -> float:
 
 
 # ----------------------------------------------------------- probabilistic (Hoeffding)
-def lambda_for_alpha(alpha: float, n: int = 1, u: float = 0.0) -> float:
+def lambda_for_alpha(alpha: float, n: int, u: float) -> float:
     """
-    Higham & Mary (2019) Thm 2.4: P(lambda) = 1 - 2 exp(-lambda^2/2).
-    P >= 1 - alpha gives lambda = sqrt(2 log(2/alpha)). n, u unused
-    (the Thm 2.4 probability is independent of n and u).
+    Higham & Mary (2019). Thm 2.4 gives, for ONE product of (1+delta) factors,
+        P(lambda) = 1 - 2 exp(-lambda^2 (1-u)^2 / 2).
+    Thm 3.1 (inner products / sums of n terms) applies it to all n terms via a
+    union bound, so the SUM bound holds with probability at least
+        Q(lambda, n) = 1 - n (1 - P(lambda)) = 1 - 2n exp(-lambda^2 (1-u)^2 / 2).
+    Setting the failure probability n(1-P) = alpha and solving:
+        lambda(alpha, n) = sqrt(2 ln(2n/alpha)) / (1-u).
+    The n DOES appear (the union bound over n terms). An earlier version of
+    this file used Thm 2.4's P(lambda) directly and omitted the n, which made
+    lambda too small by ~1.6x at n=2^20. Corrected per HM Thm 3.1, eq (3.1).
     """
     if not (0.0 < alpha < 1.0):
         raise ValueError("alpha must satisfy 0 < alpha < 1")
-    return math.sqrt(2.0 * math.log(2.0 / alpha))
+    if n < 1:
+        raise ValueError("n must be >= 1")
+    if not (0.0 <= u < 1.0):
+        raise ValueError("u must satisfy 0 <= u < 1")
+    return math.sqrt(2.0 * math.log(2.0 * n / alpha)) / (1.0 - u)
 
 
 def tau_probabilistic(n: int, u: float, S: float, alpha: float) -> float:
@@ -92,7 +103,7 @@ def tau_probabilistic(n: int, u: float, S: float, alpha: float) -> float:
         raise ValueError("u must satisfy 0 <= u < 1")
     if S < 0.0:
         raise ValueError("S must be nonnegative")
-    lam = lambda_for_alpha(alpha / 2.0)
+    lam = lambda_for_alpha(alpha / 2.0, n, u)
     exponent = (lam * math.sqrt(n) * u + n * u * u) / (1.0 - u)
     return 2.0 * math.expm1(exponent) * S
 
@@ -105,16 +116,22 @@ def tau_bernstein(n: int, u: float, S: float, alpha: float,
     measured rounding-error variance sigma^2 = sigma2_over_u2 * u^2 rather than
     the worst-case u^2 that tau_probabilistic assumes.
 
-    Two-sided Bernstein, beta = alpha/2 per run (union over two runs):
+    Two-sided Bernstein per term, union-bounded over the n terms (matching the
+    structure of HM Thm 3.1), with beta = alpha/2 per run (union over two runs):
         P(|sum delta| >= t) <= 2 exp(-t^2 / (2(n sigma^2 + u t/3)))
-    Setting 2 exp(...) = beta and solving for t gives the quadratic
-        t^2 - (2 u L / 3) t - 2 n sigma^2 L = 0,   L = ln(2/beta),
+    Setting 2n exp(...) = beta and solving for t gives the quadratic
+        t^2 - (2 u L / 3) t - 2 n sigma^2 L = 0,   L = ln(2n/beta),
     whose positive root bounds one run's relative error; two runs differ by
     at most 2*t*S.
 
-    Recovers the variance-attributable part of tau_probabilistic's
-    conservatism (~2.3x at the measured sigma). Assumes mean-zero errors
-    (verified via variance.py). VERIFY sigma2_over_u2 for the dtype/regime.
+    Assumptions (state these in the paper): mean-independent, mean-zero
+    rounding errors with |delta| <= u and variance sigma^2 -- the HM Model 2.1
+    plus a variance parameter. sigma2_over_u2 is MEASURED (variance.py), so
+    tau_bernstein is a bound under a calibrated error model, not purely a
+    priori. Recovers the variance-attributable part of tau_probabilistic's
+    conservatism (~2.35x at the measured sigma; the ratio is invariant to the
+    n-factor correction since both bounds scale as sqrt(L)). Valid only where
+    the errors are unbiased: fp32/fp64 (verified), NOT fp16 (biased).
     """
     if n < 1:
         raise ValueError("n must be >= 1")
@@ -125,7 +142,7 @@ def tau_bernstein(n: int, u: float, S: float, alpha: float,
     if S < 0.0:
         raise ValueError("S must be nonnegative")
     beta = alpha / 2.0
-    L = math.log(2.0 / beta)
+    L = math.log(2.0 * n / beta)
     sigma2 = sigma2_over_u2 * u * u
     b = -(2.0 * u * L / 3.0)
     c = -(2.0 * n * sigma2 * L)
@@ -139,8 +156,9 @@ if __name__ == "__main__":
     # regression asserts: lock the derivations
     th = tau_probabilistic(2**20, u, 1.0, 1e-3)
     tb = tau_bernstein(2**20, u, 1.0, 1e-3)
-    assert abs(th - 4.972e-4) < 1e-6, f"hoeffding tau drifted: {th:.6e}"
-    assert abs(tb - 2.11e-4) < 1e-5, f"bernstein tau drifted: {tb:.6e}"
+    # corrected per HM Thm 3.1 (union bound over n terms): lambda = sqrt(2 ln(2n/beta))/(1-u)
+    assert abs(th - 8.128e-4) < 1e-6, f"hoeffding tau drifted: {th:.6e}"
+    assert abs(tb - 3.456e-4) < 1e-6, f"bernstein tau drifted: {tb:.6e}"
     print(f"assert passed.")
     print(f"  tau_hoeffding  (n=2^20) = {th:.6e}")
     print(f"  tau_bernstein  (n=2^20) = {tb:.6e}")

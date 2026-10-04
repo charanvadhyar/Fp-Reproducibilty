@@ -19,31 +19,10 @@ import argparse, json, math
 import numpy as np
 
 U = 2.0 ** -24
-SIGMA2_OVER_U2 = 0.18   # MEASURED on real data via variance.py (stable across kappa)
+from bounds import SIGMA2_OVER_U2
 
 
-def lambda_for_alpha(alpha):
-    return math.sqrt(2.0 * math.log(2.0 / alpha))
-
-
-def tau_hoeffding(n, u, S, alpha):
-    lam = lambda_for_alpha(alpha / 2.0)
-    return 2.0 * math.expm1((lam * math.sqrt(n) * u + n * u * u) / (1.0 - u)) * S
-
-
-def tau_bernstein(n, u, S, alpha, sigma2_over_u2=SIGMA2_OVER_U2):
-    """
-    Two-sided Bernstein. beta = alpha/2 per run (union over the two runs).
-    Solve t^2 - (2uL/3) t - 2 n sigma^2 L = 0 for the positive root,
-    where L = ln(2/beta). Returns the two-run tolerance 2*t*S.
-    """
-    beta = alpha / 2.0
-    L = math.log(2.0 / beta)
-    sigma2 = sigma2_over_u2 * u * u
-    b = -(2.0 * u * L / 3.0)
-    c = -(2.0 * n * sigma2 * L)
-    t = (-b + math.sqrt(b * b - 4.0 * c)) / 2.0
-    return 2.0 * t * S
+from bounds import tau_probabilistic as tau_hoeffding, tau_bernstein, lambda_for_alpha
 
 
 def load(path):
