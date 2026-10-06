@@ -13,8 +13,10 @@ Notation (Higham, Accuracy and Stability of Numerical Algorithms, 2nd ed.):
 
 Probabilistic bound: Higham & Mary 2019, SIAM J. Sci. Comput. 41(5), Thm 2.4.
   |s_hat - s| <= gamma_tilde_n(lambda) * S   with prob >= 1 - 2 exp(-lambda^2/2),
-  gamma_tilde_n(lambda) = exp((lambda*sqrt(n)*u + n*u^2)/(1-u)) - 1.
-  [VERIFY the (1-u) placement and the prefactor against the paper.]
+  gamma_tilde_n(lambda) = exp(lambda*sqrt(n)*u + n*u^2/(1-u)) - 1.
+  (Higham & Mary 2019, eq. (2.1): the 1/(1-u) applies to the second-order term only.
+   Verified against the paper 2026-10-06; the earlier form divided both terms by (1-u),
+   a relative difference of ~u that does not change any reported value.)
 
 Bernstein bound: uses the measured rounding-error variance sigma^2 instead of
 the worst-case u^2. sigma^2/u^2 measured ~0.18 on fp32 (variance.py), stable
@@ -104,7 +106,7 @@ def tau_probabilistic(n: int, u: float, S: float, alpha: float) -> float:
     if S < 0.0:
         raise ValueError("S must be nonnegative")
     lam = lambda_for_alpha(alpha / 2.0, n, u)
-    exponent = (lam * math.sqrt(n) * u + n * u * u) / (1.0 - u)
+    exponent = lam * math.sqrt(n) * u + n * u * u / (1.0 - u)   # HM 2019 eq. (2.1)
     return 2.0 * math.expm1(exponent) * S
 
 
@@ -213,3 +215,104 @@ if __name__ == "__main__":
     print("kappa ceiling at n=2^20, fp32 (worst-case relative error hits 1):")
     for s in ["recursive", "pairwise", "kahan"]:
         print(f"  {s:>10}: kappa_max ~ {kappa_ceiling(s, 2**20, u):.3g}")
+
+
+# ---------------------------------------------------------------------------
+# WP2 (journal version): ORDER-ROBUST PARTIAL-SUM TOLERANCES
+#
+# Exact error identity for any evaluation tree (chain, pairwise, atomic order):
+#     s_hat - s = sum_v delta_v * t_v,       t_v = (exact sum of the two operands at node v)
+# t_v is measurable w.r.t. the roundings before node v, so under the
+# mean-independence model this is a martingale transform -- no first-order
+# truncation, and no union bound over n products (Hallman 2021).
+#
+# The verifier does not know the other party's order, so we bound
+#     sum_v t_v^2  <=  fac^2 * Phi(|x|),   fac = (1+gamma_n)/(1-u),
+#     Phi(|x|) = max over ALL evaluation trees of sum_v (sum_{j in v} |x_j|)^2
+#              = sum_{k=2}^{n} (sum of the k largest |x_j|)^2        (Lemma; one sort)
+# The lemma (descending chain maximizes over every tree) is proved by an
+# exchange argument and verified by brute force over all trees for n <= 6.
+#
+#   tau_ps (Azuma-Hoeffding with predictable bounds, no variance assumption):
+#       |s_hat - s| <= lambda u fac sqrt(Phi)   w.p. >= 1 - 2 exp(-lambda^2/2)
+#       two-run: tau_PS = 2 lambda(alpha/2) u fac sqrt(Phi),  lambda(beta)=sqrt(2 ln(2/beta))
+#   tau_ps_freedman (adds a conditional-variance bound sigma^2 per rounding):
+#       c = u fac S,  v = sigma^2 fac^2 Phi,  L = ln(4/alpha)
+#       a = cL/3 + sqrt((cL/3)^2 + 2 v L);   tau_PSF = 2a
+# ---------------------------------------------------------------------------
+
+def phi_abs(x) -> float:
+    """Phi(|x|) = sum_{k=2}^{n} (sum of the k largest |x_j|)^2, in float64."""
+    import numpy as _np
+    xs = _np.sort(_np.abs(_np.asarray(x, dtype=_np.float64)))[::-1]
+    cs = _np.cumsum(xs)
+    return float((cs[1:] ** 2).sum())
+
+
+def _fac(n: int, u: float) -> float:
+    return (1.0 + gamma(n, u)) / (1.0 - u)
+
+
+def tau_ps(n: int, u: float, phi: float, alpha: float) -> float:
+    """Order-robust two-run tolerance, boundedness + mean independence only (no union bound)."""
+    lam = math.sqrt(2.0 * math.log(4.0 / alpha))          # per-run failure alpha/2: 2exp(-lam^2/2)=alpha/2
+    return 2.0 * lam * u * _fac(n, u) * math.sqrt(phi)
+
+
+def tau_ps_freedman(n: int, u: float, S: float, phi: float, alpha: float,
+                    sigma2_over_u2: float = SIGMA2_OVER_U2) -> float:
+    """Order-robust two-run tolerance with a conditional-variance bound sigma^2 = sigma2_over_u2 * u^2."""
+    fac = _fac(n, u)
+    c = u * fac * S
+    v = sigma2_over_u2 * u * u * fac * fac * phi
+    L = math.log(4.0 / alpha)
+    a = c * L / 3.0 + math.sqrt((c * L / 3.0) ** 2 + 2.0 * v * L)
+    return 2.0 * a
+
+
+if __name__ == "__main__":
+    # sanity for the WP2 tolerances on uniform-[0.5,1.5] data at n=2^20
+    import numpy as _np
+    _rng = _np.random.default_rng(0); _n = 2 ** 20; _u = UNIT_ROUNDOFF["float32"]
+    _x = (_rng.random(_n) + 0.5).astype(_np.float32)
+    _S = float(_np.abs(_x.astype(_np.float64)).sum()); _phi = phi_abs(_x)
+    _tH = tau_probabilistic(_n, _u, _S, 1e-3); _tFm = tau_freedman(_n, _u, _S, 1e-3)
+    _tPS = tau_ps(_n, _u, _phi, 1e-3); _tPSF = tau_ps_freedman(_n, _u, _S, _phi, 1e-3)
+    _tPSFa = tau_ps_freedman(_n, _u, _S, _phi, 1e-3, SIGMA2_OVER_U2_UNIFORM)
+    print(f"Phi/(n S^2) = {_phi/(_n*_S*_S):.4f}   (uniform[0.5,1.5]: ~0.425)")
+    print(f"tau_H/S   = {_tH/_S:.3e}")
+    print(f"tau_Fm/S  = {_tFm/_S:.3e}   ({_tH/_tFm:.2f}x tighter than tau_H)")
+    print(f"tau_PS/S  = {_tPS/_S:.3e}   ({_tH/_tPS:.2f}x; no variance assumption)")
+    print(f"tau_PSFa/S= {_tPSFa/_S:.3e}   ({_tH/_tPSFa:.2f}x; uniform model)")
+    print(f"tau_PSF/S = {_tPSF/_S:.3e}   ({_tH/_tPSF:.2f}x; calibrated 0.18u^2)")
+
+
+# ---------------------------------------------------------------------------
+# WP3: ELEMENTWISE TWO-RUN TOLERANCE FOR MATRIX PRODUCTS  C = A B,  A: MxK, B: KxN
+#
+# Each entry c_ij is an inner product of length K. HM 2019 Thm 3.1 gives, for
+# any evaluation order, |c_hat - c|_ij <= gamma~_K(lambda) (|A||B|)_ij with
+# probability Q(lambda, K) per entry. Rounding models for the accumulation:
+#   "scalar"  : fp32 FMA chain -> K roundings per entry          (cuBLAS fp32, TF32 off)
+#   "block"   : tensor-core block FMA with exact products and exact in-block
+#               sums of length b, one fp32 rounding per block (Blanchard et al.
+#               2020, model with exact block accumulation) -> q = ceil(K/b)
+#               roundings per entry.  b = 4 (Volta/Ampere fp16), treat as parameter.
+# Simultaneous guarantee over all M*N entries by a union bound:
+#   lambda = lambda_for_alpha(alpha/2, q*M*N)  ->  per-run failure alpha/2 for
+#   the whole matrix.  (Per-entry alpha is the alternative; both are exposed.)
+#   tau_ij = 2 gamma~_q(lambda) (|A||B|)_ij
+# ---------------------------------------------------------------------------
+
+def tau_gemm(A, B, alpha: float, u: float = 2.0 ** -24, model: str = "scalar", b: int = 4,
+             per_entry: bool = False):
+    """Elementwise two-run tolerance matrix for C = A B (returns numpy MxN float64)."""
+    import numpy as _np
+    A = _np.asarray(A, dtype=_np.float64); B = _np.asarray(B, dtype=_np.float64)
+    M, K = A.shape; K2, N = B.shape
+    assert K == K2
+    q = K if model == "scalar" else int(math.ceil(K / b))
+    events = q if per_entry else q * M * N
+    lam = lambda_for_alpha(alpha / 2.0, events, u)
+    gt = math.expm1(lam * math.sqrt(q) * u + q * u * u / (1.0 - u))
+    return 2.0 * gt * (_np.abs(A) @ _np.abs(B))

@@ -59,11 +59,18 @@ def main():
     ap.add_argument("--launches", type=int, default=200)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--inside-regime", action="store_true",
+                    help="small sizes n=2^6..2^11 so that fp16 (n*u<1 for n<2048) and bf16 "
+                         "(n<256) are tested INSIDE the bound's validity regime "
+                         "(review-2 limitation, Sec. V-F). The default sizes 2^14..2^22 "
+                         "put both half formats outside it.")
     args = ap.parse_args()
     if cp is None:
         print("CuPy not installed."); return
 
-    if args.quick:
+    if args.inside_regime:
+        ns = [2**k for k in (6, 8, 10, 11)]; kappas = [1, 1e2, 1e4]
+    elif args.quick:
         ns = [2**k for k in (14, 18, 20)]; kappas = [1, 1e4]
     else:
         ns = [2**k for k in (14, 16, 18, 20, 22)]; kappas = [1, 1e2, 1e4, 1e6]

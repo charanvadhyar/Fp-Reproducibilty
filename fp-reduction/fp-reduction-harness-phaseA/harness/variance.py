@@ -1,110 +1,130 @@
 """
-variance.py — measure the per-rounding error variance.
+variance.py — measure the per-rounding error mean and variance (v2).
 
-Bernstein's bound replaces Hoeffding's use of the MAX error (u) with the
-VARIANCE of the error (sigma^2). The tightening factor hinges on how small
-sigma^2 is relative to u^2:
+Why this exists
+---------------
+The Freedman (variance-aware) tolerance needs a bound on the CONDITIONAL
+variance of each rounding error, E[delta_k^2 | past]. This script measures:
 
-  Hoeffding assumes each delta can be as large as u           -> uses u^2
-  Bernstein uses the actual spread of delta                   -> uses sigma^2
+  (a) the marginal mean and variance of delta_k over many sums   (as before)
+  (b) the variance BINNED by position in the sum (i.e. by the magnitude of the
+      running partial sum), and reports the maximum binned variance — an
+      empirical proxy for the conditional-variance bound a reviewer asks for.
 
-For round-to-nearest, THEORY says delta is ~uniform on [-u, +u], giving
-  sigma^2 = u^2 / 3      (variance of a uniform distribution on [-u,u])
-so sigma^2 / u^2 ~ 0.333. That factor is what Bernstein exploits.
+v2 changes (review-2 fixes)
+---------------------------
+  * exact reference step via fractions.Fraction for EVERY dtype, so fp64 can
+    be measured too (v1 used fp64 as the "exact" step, which is exact for fp32
+    but trivially zero for fp64).
+  * --binned: conditional-variance proxy (max over bins of var(delta_k)).
+  * --kappa uses gensum when available, else a cancelling construction.
+  * reports standard error of the mean, so "unbiased" has a number behind it.
+  * NOTE on regime: for fp16, n must satisfy n*u < 1 (n < 2048) to be inside
+    the bound's validity regime. Measuring at n = 50,000 (v1 default) puts
+    fp16 in the stagnation regime, where errors are systematically negative.
+    Run both to show the regime boundary.
 
-This script MEASURES sigma^2 directly, because the Phase A sweep stored only
-final errors, not individual rounding errors. It:
-  1. does recursive summation in fp32
-  2. at each addition, computes the exact rounding error delta_k =
-     (fl(s+x) - (s+x)) / (s+x)   using an fp64 "truth" for that single step
-  3. collects all delta_k across many sums and reports their variance
-
-Output: measured sigma^2 / u^2. If ~0.33, Bernstein's assumption holds and the
-~sqrt(3)x-per-term tightening is justified. If much larger, the errors are
-biased/heavy-tailed and Bernstein won't deliver the full gain -> a finding.
-
-Usage:
-  python variance.py
-  python variance.py --n 100000 --sums 50 --kappa 1
+Usage
+-----
+  python variance.py                                  # fp32, n=50000, 8 sums
+  python variance.py --dtype float16 --n 1000 --sums 40
+  python variance.py --dtype float16 --n 50000 --sums 8     # outside regime
+  python variance.py --dtype float64 --n 50000 --sums 8
+  python variance.py --binned --bins 20
 """
 
-import argparse, math
+import argparse, math, sys
+from fractions import Fraction
 import numpy as np
 
 U_BY_DTYPE = {"float32": 2.0**-24, "float16": 2.0**-11, "float64": 2.0**-53}
-U = U_BY_DTYPE["float32"]  # default; overridden by --dtype
 
 
 def collect_deltas(x, dtype="float32"):
     """
-    Recursive sum in the given dtype; return the relative rounding error delta_k
-    of each addition, measured against an fp64 exact single step.
-    delta_k = (fl(s+x_k) - (s+x_k)) / (s+x_k).
-    (bf16 omitted here: numpy has no native bf16; measure bf16 on GPU separately.)
+    Recursive sum in `dtype`; return delta_k = (fl(s+x_k) - (s+x_k)) / (s+x_k)
+    with the exact step (s + x_k) evaluated in exact rational arithmetic.
+    Returns (deltas, positions) with positions = index k of each addition.
     """
     npdt = getattr(np, dtype)
-    deltas = []
+    deltas, pos = [], []
     s = npdt(0.0)
-    for xk in x:
-        exact_step = np.float64(s) + np.float64(xk)
+    for k, xk in enumerate(x):
+        exact_step = Fraction(float(s)) + Fraction(float(xk))   # exact
         fl_step = npdt(s + xk)
-        if exact_step != 0.0:
-            d = (np.float64(fl_step) - exact_step) / exact_step
+        if not np.isfinite(fl_step):
+            break                                                # overflow: stop
+        if exact_step != 0:
+            d = (Fraction(float(fl_step)) - exact_step) / exact_step
             deltas.append(float(d))
+            pos.append(k)
         s = fl_step
-    return np.array(deltas)
+    return np.array(deltas), np.array(pos)
+
+
+def make_input(n, kappa, rng, npdt, seed):
+    """Inputs with prescribed conditioning. Uses gensum if importable."""
+    try:
+        from gensum import gensum
+        x, s_exact, k_ach = gensum(n, kappa, seed=seed)
+        return x.astype(npdt)
+    except Exception:
+        if kappa <= 1:
+            return (rng.random(n) + 0.5).astype(npdt)
+        # cancelling construction: pairs +a, -a plus a small residual
+        a = rng.random(n // 2) + 0.5
+        x = np.concatenate([a, -a])
+        x[-1] += np.abs(x).sum() / kappa
+        rng.shuffle(x)
+        return x.astype(npdt)
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=50000)
-    ap.add_argument("--sums", type=int, default=40)
+    ap.add_argument("--sums", type=int, default=8)
     ap.add_argument("--kappa", type=float, default=1.0)
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--dtype", default="float32", choices=["float32", "float16", "float64"])
+    ap.add_argument("--dtype", default="float32", choices=list(U_BY_DTYPE))
+    ap.add_argument("--binned", action="store_true",
+                    help="report variance binned by position (conditional-variance proxy)")
+    ap.add_argument("--bins", type=int, default=10)
     args = ap.parse_args()
 
-    global U
     U = U_BY_DTYPE[args.dtype]
     npdt = getattr(np, args.dtype)
     rng = np.random.default_rng(args.seed)
-    all_d = []
+    all_d, all_p = [], []
     for i in range(args.sums):
-        if args.kappa <= 1:
-            x = (rng.random(args.n).astype(npdt) + npdt(0.5))
-        else:
-            x = ((rng.random(args.n) * 2 - 1).astype(npdt))
-        all_d.append(collect_deltas(x, args.dtype))
-    d = np.concatenate(all_d)
-    print(f"dtype = {args.dtype}")
+        x = make_input(args.n, args.kappa, rng, npdt, args.seed + i)
+        d, p = collect_deltas(x, args.dtype)
+        all_d.append(d); all_p.append(p)
+    d = np.concatenate(all_d); p = np.concatenate(all_p)
 
-    mean = float(d.mean())
-    var = float(d.var())
-    sigma2_over_u2 = var / (U * U)
-    # also the "effective" bound Bernstein would use vs Hoeffding
-    #   Hoeffding per-term scale: u
-    #   Bernstein per-term scale: sigma = sqrt(var)
-    per_term_ratio = math.sqrt(var) / U  # sigma / u ; ~1/sqrt(3)=0.577 if uniform
+    mean = float(d.mean()); var = float(d.var()); sd = math.sqrt(var)
+    sem = sd / math.sqrt(len(d))
+    print(f"dtype = {args.dtype}   u = {U:.3e}   n = {args.n}   n*u = {args.n*U:.3g}"
+          f"   {'INSIDE' if args.n*U < 1 else 'OUTSIDE'} regime n*u<1")
+    print(f"samples (delta_k): {len(d):,}   kappa requested = {args.kappa:g}")
+    print(f"mean(delta)/u      = {mean/U:+.4f}   (SE of mean / u = {sem/U:.4f};"
+          f" |mean| / SE = {abs(mean)/sem:.1f})")
+    print(f"sigma^2 / u^2      = {var/(U*U):.4f}   (uniform model: 0.3333; worst case: 1.0)")
+    print(f"max |delta| / u    = {np.abs(d).max()/U:.4f}   (must be <= 1)")
 
-    print(f"fp32 u = {U:.3e},  u^2 = {U*U:.3e}")
-    print(f"samples (delta_k): {len(d):,}")
-    print()
-    print(f"mean(delta)        = {mean:+.3e}   (should be ~0 if unbiased)")
-    print(f"var(delta)         = {var:.3e}")
-    print(f"sigma^2 / u^2      = {sigma2_over_u2:.4f}   (uniform theory: 0.333)")
-    print(f"sigma / u          = {per_term_ratio:.4f}   (uniform theory: 0.577)")
-    print()
-    print("Interpretation:")
-    if abs(mean) < 0.1 * math.sqrt(var) and 0.2 < sigma2_over_u2 < 0.5:
-        print("  mean~0 and sigma^2/u^2 ~ 1/3: round-to-nearest behaves ~uniform.")
-        print("  Bernstein's variance assumption HOLDS -> tightening justified.")
-        print(f"  Expected per-term tightening ~ u/sigma = {1/per_term_ratio:.2f}x")
-    elif abs(mean) >= 0.1 * math.sqrt(var):
-        print("  mean is NOT ~0: errors are BIASED (swamping/structure).")
-        print("  Bernstein assumes mean-zero -> gain reduced; this is a finding.")
-    else:
-        print(f"  sigma^2/u^2 = {sigma2_over_u2:.3f}, off the uniform 1/3.")
-        print("  Bernstein still helps but by a different factor than sqrt(3).")
+    if args.binned:
+        edges = np.linspace(0, args.n, args.bins + 1)
+        print(f"\nvariance by position bin (conditional-variance proxy), {args.bins} bins:")
+        mx = 0.0
+        for b in range(args.bins):
+            m = (p >= edges[b]) & (p < edges[b + 1])
+            if m.sum() < 100:
+                continue
+            v = float(d[m].var()) / (U * U); mu = float(d[m].mean()) / U
+            mx = max(mx, v)
+            print(f"  k in [{int(edges[b]):>7},{int(edges[b+1]):>7}):  "
+                  f"mean/u = {mu:+.4f}   sigma^2/u^2 = {v:.4f}   (N={m.sum():,})")
+        print(f"max binned sigma^2/u^2 = {mx:.4f}   "
+              f"({'<= 1/3: uniform-model bound respected' if mx <= 1/3 else '> 1/3: uniform-model bound VIOLATED'})")
 
 
 if __name__ == "__main__":
