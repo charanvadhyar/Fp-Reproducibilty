@@ -101,10 +101,13 @@ def splitk_emulate(A, B, splits, rng):
 
 def pair_stats(C1, C2, tau, Cref):
     d = np.abs(C1.astype(np.float64) - C2.astype(np.float64))
-    err = np.abs(C1.astype(np.float64) - Cref)
+    e = C1.astype(np.float64) - Cref
+    err = np.abs(e)
     return {"entries": int(d.size), "nondet_entries": int((d > 0).sum()),
             "max_spread_over_tau": float((d / tau).max()), "median_spread_over_tau": float(np.median(d / tau)),
-            "exceedances": int((d > tau).sum()), "max_err_over_tau": float((err / tau).max())}
+            "exceedances": int((d > tau).sum()), "max_err_over_tau": float((err / tau).max()),
+            # bias indicator: mean signed error / mean |error|; ~0 for mean-zero rounding, ->+-1 for truncation
+            "signed_bias_ratio": float(e.mean() / err.mean()) if err.mean() > 0 else 0.0}
 
 
 def main():
