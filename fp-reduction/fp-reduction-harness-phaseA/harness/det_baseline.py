@@ -59,7 +59,7 @@ def timeit(fn, reps):
 
 def spread(fn, reps):
     r = [fn() for _ in range(reps)]
-    return float(max(float((a - r[0]).abs().max()) for a in r)), len({a.view(-1)[0].item() for a in r})
+    return float(max(float((a - r[0]).abs().max()) for a in r)), len({a.reshape(-1)[0].item() for a in r})
 
 
 out = {"deterministic_mode": args.det, "device": dev, "torch": torch.__version__,
