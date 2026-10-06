@@ -67,7 +67,7 @@ def main():
     ap.add_argument("--prompts", type=int, default=128)
     ap.add_argument("--prompt-file", default=None, help="text file, one prompt per line (to hunt for near-ties use thousands)")
     ap.add_argument("--launches", type=int, default=100)
-    ap.add_argument("--splits", type=int, default=8)
+    ap.add_argument("--splits", type=int, default=32)
     ap.add_argument("--alpha", type=float, default=1e-3)
     ap.add_argument("--near-tie", type=int, default=16, help="number of smallest-margin prompts for fault injection")
     ap.add_argument("--fault-trials", type=int, default=30)
@@ -181,17 +181,29 @@ def main():
             xg = cp.asarray(x)
             r = np.array([gs.naive_atomic(xg, n, kern) for _ in range(args.launches)])
             spread = float(r.max() - r.min())
+            # swamping diagnostic: mass of terms below half an ulp of the final sum -- such terms are
+            # dropped deterministically when added to a full accumulator (biased, order-dependent error)
+            half_ulp = 0.5 * np.spacing(np.float32(S))
+            swamped = float(np.abs(x[np.abs(x) < half_ulp]).astype(np.float64).sum()) / S
             cells.append({"spread": spread, "tauH": tau_probabilistic(n, U, S, args.alpha),
                           "tauFm": tau_freedman(n, U, S, args.alpha), "tauPSF": tau_ps_freedman(n, U, S, phi, args.alpha),
-                          "distinct": int(len(np.unique(r)))})
+                          "distinct": int(len(np.unique(r))), "swamped_mass_fraction": swamped,
+                          "swamped_count_fraction": float((np.abs(x) < half_ulp).mean()),
+                          "phi_over_nS2": phi / (n * S * S)})
         scal[name] = {"n": n, "instances": len(cells),
+                      "cells": cells,
+                      "swamped_mass_fraction_median": float(np.median([c["swamped_mass_fraction"] for c in cells])),
+                      "swamped_count_fraction_median": float(np.median([c["swamped_count_fraction"] for c in cells])),
+                      "util_H_per_instance": [c["spread"] / c["tauH"] for c in cells],
+                      "util_PSF_per_instance": [c["spread"] / c["tauPSF"] for c in cells],
                       "nondet_instances": sum(c["distinct"] > 1 for c in cells),
                       "exceed_H": sum(c["spread"] > c["tauH"] for c in cells),
                       "exceed_Fm": sum(c["spread"] > c["tauFm"] for c in cells),
                       "exceed_PSF": sum(c["spread"] > c["tauPSF"] for c in cells),
                       "max_util_H": max(c["spread"] / c["tauH"] for c in cells),
                       "max_util_PSF": max(c["spread"] / c["tauPSF"] for c in cells)}
-        print(name, scal[name])
+        print(name, {k: v for k, v in scal[name].items() if k not in ('cells', 'util_H_per_instance', 'util_PSF_per_instance')},
+              ' max util_PSF per instance:', round(max(scal[name]['util_PSF_per_instance']), 3))
 
     # ---- 5. near-tie faults ----
     order = np.argsort(margin / tau_pair)

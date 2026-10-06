@@ -42,10 +42,12 @@ U32 = UNIT_ROUNDOFF["float32"]
 _SPLITK = r'''
 extern "C" __global__
 void splitk_atomic(const float* A, const float* B, float* C, int M, int N, int K, int splits) {
-    // grid: (ceil(N/bx), ceil(M/by), splits); each thread: one (i,j), one K-chunk
-    int j = blockIdx.x * blockDim.x + threadIdx.x;
-    int i = blockIdx.y * blockDim.y + threadIdx.y;
-    int s = blockIdx.z;
+    // grid: (splits, ceil(N/bx), ceil(M/by)); the split index is the FASTEST-varying block
+    // dimension so that the K-chunks of one output tile are launched back-to-back and
+    // genuinely race on the atomicAdd (with splits in grid.z they land in order).
+    int s = blockIdx.x;
+    int j = blockIdx.y * blockDim.x + threadIdx.x;
+    int i = blockIdx.z * blockDim.y + threadIdx.y;
     if (i >= M || j >= N) return;
     int chunk = (K + splits - 1) / splits;
     int k0 = s * chunk, k1 = min(K, k0 + chunk);
@@ -74,7 +76,7 @@ class SplitK:
     def __call__(self, Ag, Bg):
         M, K = Ag.shape; N = Bg.shape[1]
         C = cp.zeros((M, N), dtype=cp.float32)
-        grid = ((N + self.bx - 1) // self.bx, (M + self.by - 1) // self.by, self.splits)
+        grid = (self.splits, (N + self.bx - 1) // self.bx, (M + self.by - 1) // self.by)
         self.k(grid, (self.bx, self.by), (Ag, Bg, C, np.int32(M), np.int32(N), np.int32(K), np.int32(self.splits)))
         cp.cuda.Stream.null.synchronize()
         return cp.asnumpy(C)
@@ -164,21 +166,46 @@ def main():
         try:
             import torch
             torch.backends.cuda.matmul.allow_tf32 = False; torch.backends.cudnn.allow_tf32 = False
+            # force fp32 accumulation inside split-K reductions of half-precision GEMMs
+            torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction = False
+            torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction = False
             At = torch.tensor(A, device="cuda"); Bt = torch.tensor(B, device="cuda")
-            for name, dt, model, b in (("torch_fp32_scalar", torch.float32, "scalar", 4), ("torch_fp16_tensorcore", torch.float16, "block", 4)):
+
+            def mm(a, b, want_fp32_out):
+                """half-precision inputs: fp32 output if this torch supports out_dtype, else half output."""
+                if want_fp32_out:
+                    try:
+                        return torch.mm(a, b, out_dtype=torch.float32), True
+                    except TypeError:
+                        pass
+                return torch.mm(a, b), False
+
+            U16 = 2.0 ** -11
+            cases = (("torch_fp32_scalar", torch.float32, "scalar", 4, False),
+                     ("torch_fp16_tc_fp32out", torch.float16, "block", 4, True),
+                     ("torch_fp16_tc_fp16out", torch.float16, "block", 4, False))
+            for name, dt, model, b, want32 in cases:
                 Ad, Bd = At.to(dt), Bt.to(dt)
                 Aq, Bq = Ad.float().cpu().numpy(), Bd.float().cpu().numpy()      # the values actually multiplied
                 Cq = ref64(Aq, Bq)
                 tau_m = tau_gemm(Aq, Bq, args.alpha, U32, model, b)
-                full = torch.matmul(Ad, Bd).float().cpu().numpy()                 # all rows at once
-                rows1 = np.vstack([torch.matmul(Ad[i:i + 1], Bd).float().cpu().numpy() for i in range(M)])  # batch 1
+                full_t, got32 = mm(Ad, Bd, want32)
+                if want32 and not got32:
+                    print(f"{name}: out_dtype=float32 unsupported by this torch; skipped"); continue
+                if dt == torch.float16 and not got32:
+                    # half-precision OUTPUT: each run rounds c_ij to fp16 -> add the deterministic output term
+                    tau_m = tau_m + 2.0 * U16 * np.abs(Cq)
+                full = full_t.float().cpu().numpy()                                # all rows at once
+                rows1 = np.vstack([mm(Ad[i:i + 1], Bd, want32)[0].float().cpu().numpy() for i in range(M)])  # batch 1
                 st = pair_stats(full, rows1, tau_m, Cq)
                 st["bitwise_identical"] = bool(np.array_equal(full.view(np.int32), rows1.view(np.int32)))
-                # error scaling in K for this path (exponent of max|err| vs K on sub-products)
+                st["output_dtype"] = "float32" if (dt == torch.float32 or got32) else "float16"
+                st["tolerance"] = model + ("+fp16_output_rounding" if (dt == torch.float16 and not got32) else "")
+                # error scaling in K for this path (exponent of median|err| vs K on sub-products)
                 Ks = [k for k in (256, 512, 1024, 2048, 4096, 8192) if k <= K]
                 errs = []
                 for k in Ks:
-                    e = np.abs(torch.matmul(Ad[:, :k], Bd[:k, :]).float().cpu().numpy() - ref64(Aq[:, :k], Bq[:k, :]))
+                    e = np.abs(mm(Ad[:, :k].contiguous(), Bd[:k, :].contiguous(), want32)[0].float().cpu().numpy() - ref64(Aq[:, :k], Bq[:k, :]))
                     errs.append(float(np.median(e / (np.abs(Aq[:, :k]) @ np.abs(Bq[:k, :])))))
                 if len(Ks) >= 3:
                     st["err_scaling_exponent"] = float(np.polyfit(np.log(Ks), np.log(errs), 1)[0])
