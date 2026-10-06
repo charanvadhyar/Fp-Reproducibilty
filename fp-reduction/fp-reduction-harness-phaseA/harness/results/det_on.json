@@ -1,0 +1,96 @@
+{
+ "deterministic_mode": true,
+ "device": "cuda",
+ "torch": "2.8.0+cu128",
+ "gpu": "NVIDIA GeForce RTX 4090",
+ "timestamp": "2026-10-06T17:33:52",
+ "kernels": [
+  {
+   "n": 1048576,
+   "strategy": "naive_atomic",
+   "ms": 1.5198664600029588,
+   "distinct_of_20": 18
+  },
+  {
+   "n": 1048576,
+   "strategy": "block_atomic",
+   "ms": 0.0456216000020504,
+   "distinct_of_20": 4
+  },
+  {
+   "n": 1048576,
+   "strategy": "tree_fixed",
+   "ms": 0.23271277997992001,
+   "distinct_of_20": 1
+  },
+  {
+   "n": 1048576,
+   "strategy": "cupy_sum",
+   "ms": 0.038177660026121885,
+   "distinct_of_20": 1
+  },
+  {
+   "n": 4194304,
+   "strategy": "naive_atomic",
+   "ms": 5.901646999991499,
+   "distinct_of_20": 20
+  },
+  {
+   "n": 4194304,
+   "strategy": "block_atomic",
+   "ms": 0.06646904002991505,
+   "distinct_of_20": 4
+  },
+  {
+   "n": 4194304,
+   "strategy": "tree_fixed",
+   "ms": 0.2534355999523541,
+   "distinct_of_20": 1
+  },
+  {
+   "n": 4194304,
+   "strategy": "cupy_sum",
+   "ms": 0.03658508001535665,
+   "distinct_of_20": 1
+  }
+ ],
+ "index_add": {
+  "ms": 0.8489158599695656,
+  "max_run_to_run_spread": 0.0,
+  "distinct_of_20": 1
+ },
+ "gemm_fp32": {
+  "shape": [
+   256,
+   4096,
+   256
+  ],
+  "ms": 0.07714494000538252,
+  "max_run_to_run_spread": 0.0,
+  "distinct_of_20": 1,
+  "batch1_vs_batched_max_diff": 0.00146484375,
+  "batch_invariant": false
+ },
+ "gemm_fp16": {
+  "shape": [
+   256,
+   4096,
+   256
+  ],
+  "ms": 0.07710313999268692,
+  "max_run_to_run_spread": 0.0,
+  "distinct_of_20": 1,
+  "batch1_vs_batched_max_diff": 4.0,
+  "batch_invariant": false
+ },
+ "llm_forward": {
+  "model": "Qwen/Qwen2.5-0.5B",
+  "prompts": 16,
+  "ms": 35.79915059963241,
+  "max_run_to_run_spread": 0.0,
+  "distinct_of_10": 1,
+  "batch1_vs_batched_max_logit_diff": 7.724761962890625e-05,
+  "batch_invariant": false,
+  "top1_flips": 0
+ }
+}

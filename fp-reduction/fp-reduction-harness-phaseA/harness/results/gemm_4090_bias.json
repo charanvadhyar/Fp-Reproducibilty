@@ -1,0 +1,137 @@
+{
+ "M": 256,
+ "N": 256,
+ "K": 4096,
+ "splits": 64,
+ "alpha": 0.001,
+ "data": "uniform",
+ "tau_scalar_over_absAB_median": 5.6789544628235395e-05,
+ "timestamp": "2026-10-06T17:34:03",
+ "sources": {
+  "cublas_fp32": {
+   "entries": 65536,
+   "nondet_entries": 0,
+   "max_spread_over_tau": 0.0,
+   "median_spread_over_tau": 0.0,
+   "exceedances": 0,
+   "max_err_over_tau": 0.0057960558068193115,
+   "signed_bias_ratio": 0.009247268129417301,
+   "bitwise_identical": true
+  },
+  "split_k_atomic": {
+   "pairs": 10,
+   "entries_tested": 655360,
+   "nondet_entry_fraction": 0.6921279907226563,
+   "exceedances": 0,
+   "max_spread_over_tau": 0.010365428073064491,
+   "median_spread_over_tau": 0.002072308056515153,
+   "max_err_over_tau": 0.008851209393506287
+  },
+  "torch_fp32_scalar": {
+   "entries": 65536,
+   "nondet_entries": 40804,
+   "max_spread_over_tau": 0.006365773366974785,
+   "median_spread_over_tau": 0.0010550605141567168,
+   "exceedances": 0,
+   "max_err_over_tau": 0.0057960558068193115,
+   "signed_bias_ratio": 0.009247268129417301,
+   "bitwise_identical": false,
+   "output_dtype": "float32",
+   "tolerance": "scalar",
+   "err_scaling_exponent": 0.20603671596885084,
+   "err_over_absAB_by_K": {
+    "256": 3.0103118630729035e-08,
+    "512": 3.1510163402026736e-08,
+    "1024": 3.43240175186404e-08,
+    "2048": 3.896703256917091e-08,
+    "4096": 5.528461748441451e-08
+   }
+  },
+  "torch_fp16_tc_fp32out": {
+   "entries": 65536,
+   "nondet_entries": 65536,
+   "max_spread_over_tau": 0.19362325356356438,
+   "median_spread_over_tau": 0.17982311027486778,
+   "exceedances": 0,
+   "max_err_over_tau": 0.19292442665505627,
+   "signed_bias_ratio": -1.0,
+   "bitwise_identical": false,
+   "output_dtype": "float32",
+   "tolerance": "block",
+   "err_scaling_exponent": 0.11478889177353722,
+   "err_over_absAB_by_K": {
+    "256": 2.239186441157519e-06,
+    "512": 4.97340744852103e-06,
+    "1024": 9.315895790149661e-07,
+    "2048": 2.235588225804208e-06,
+    "4096": 4.971596425197477e-06
+   }
+  },
+  "torch_fp16_tc_fp16out": {
+   "entries": 65536,
+   "nondet_entries": 512,
+   "max_spread_over_tau": 0.9719670688534203,
+   "median_spread_over_tau": 0.0,
+   "exceedances": 0,
+   "max_err_over_tau": 0.4909006275177387,
+   "signed_bias_ratio": -0.04015184194446621,
+   "bitwise_identical": false,
+   "output_dtype": "float16",
+   "tolerance": "block+fp16_output_rounding",
+   "err_scaling_exponent": 0.0025028200426871435,
+   "err_over_absAB_by_K": {
+    "256": 0.00016338222410636763,
+    "512": 0.00016498840695924058,
+    "1024": 0.0001659195407988483,
+    "2048": 0.00016388734646313014,
+    "4096": 0.0001653582723466942
+   }
+  }
+ },
+ "provenance": {
+  "gpu": "NVIDIA GeForce RTX 4090",
+  "cupy": "14.2.0"
+ },
+ "bitflip_A": [
+  {
+   "bit": 10,
+   "trials": 50,
+   "detected_row_rate": 0.0
+  },
+  {
+   "bit": 16,
+   "trials": 50,
+   "detected_row_rate": 0.0
+  },
+  {
+   "bit": 20,
+   "trials": 50,
+   "detected_row_rate": 0.0
+  },
+  {
+   "bit": 22,
+   "trials": 50,
+   "detected_row_rate": 1.0
+  },
+  {
+   "bit": 23,
+   "trials": 50,
+   "detected_row_rate": 1.0
+  },
+  {
+   "bit": 25,
+   "trials": 50,
+   "detected_row_rate": 1.0
+  },
+  {
+   "bit": 27,
+   "trials": 50,
+   "detected_row_rate": 1.0
+  },
+  {
+   "bit": 30,
+   "trials": 22,
+   "detected_row_rate": 1.0
+  }
+ ]
+}

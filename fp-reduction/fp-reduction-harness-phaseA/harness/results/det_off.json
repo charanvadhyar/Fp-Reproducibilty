@@ -1,0 +1,86 @@
+{
+ "deterministic_mode": false,
+ "device": "cuda",
+ "torch": "2.8.0+cu128",
+ "gpu": "NVIDIA GeForce RTX 4090",
+ "timestamp": "2026-10-06T17:29:33",
+ "kernels": [
+  {
+   "n": 1048576,
+   "strategy": "naive_atomic",
+   "ms": 1.5234648199839285,
+   "distinct_of_20": 19
+  },
+  {
+   "n": 1048576,
+   "strategy": "block_atomic",
+   "ms": 0.04747058002976701,
+   "distinct_of_20": 4
+  },
+  {
+   "n": 1048576,
+   "strategy": "tree_fixed",
+   "ms": 0.2386841399857076,
+   "distinct_of_20": 1
+  },
+  {
+   "n": 1048576,
+   "strategy": "cupy_sum",
+   "ms": 0.03890585998306051,
+   "distinct_of_20": 1
+  },
+  {
+   "n": 4194304,
+   "strategy": "naive_atomic",
+   "ms": 5.795520399988163,
+   "distinct_of_20": 17
+  },
+  {
+   "n": 4194304,
+   "strategy": "block_atomic",
+   "ms": 0.062306260006153025,
+   "distinct_of_20": 4
+  },
+  {
+   "n": 4194304,
+   "strategy": "tree_fixed",
+   "ms": 0.2500642399536446,
+   "distinct_of_20": 1
+  },
+  {
+   "n": 4194304,
+   "strategy": "cupy_sum",
+   "ms": 0.03673025996249635,
+   "distinct_of_20": 1
+  }
+ ],
+ "index_add": {
+  "ms": 0.49764110000978684,
+  "max_run_to_run_spread": 1.1444091796875e-05,
+  "distinct_of_20": 7
+ },
+ "gemm_fp32": {
+  "shape": [
+   256,
+   4096,
+   256
+  ],
+  "ms": 0.02294880003319122,
+  "max_run_to_run_spread": 0.0,
+  "distinct_of_20": 1,
+  "batch1_vs_batched_max_diff": 0.00146484375,
+  "batch_invariant": false
+ },
+ "gemm_fp16": {
+  "shape": [
+   256,
+   4096,
+   256
+  ],
+  "ms": 0.01919003996590618,
+  "max_run_to_run_spread": 0.0,
+  "distinct_of_20": 1,
+  "batch1_vs_batched_max_diff": 4.0,
+  "batch_invariant": false
+ }
+}
