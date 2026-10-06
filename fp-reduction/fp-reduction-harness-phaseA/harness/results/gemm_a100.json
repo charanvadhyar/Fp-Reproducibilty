@@ -1,0 +1,77 @@
+{
+ "M": 256,
+ "N": 256,
+ "K": 4096,
+ "splits": 64,
+ "alpha": 0.001,
+ "data": "uniform",
+ "tau_scalar_over_absAB_median": 5.6789544628235395e-05,
+ "timestamp": "2026-10-06T18:03:42",
+ "sources": {
+  "cublas_fp32": {
+   "entries": 65536,
+   "nondet_entries": 0,
+   "max_spread_over_tau": 0.0,
+   "median_spread_over_tau": 0.0,
+   "exceedances": 0,
+   "max_err_over_tau": 0.006535338466453127,
+   "signed_bias_ratio": -0.006407249205682501,
+   "bitwise_identical": true
+  },
+  "split_k_atomic": {
+   "pairs": 25,
+   "entries_tested": 1638400,
+   "nondet_entry_fraction": 0.698199462890625,
+   "exceedances": 0,
+   "max_spread_over_tau": 0.012548284325432644,
+   "median_spread_over_tau": 0.002075596091813575,
+   "max_err_over_tau": 0.008901646859495849
+  }
+ },
+ "provenance": {
+  "gpu": "NVIDIA A100-SXM4-80GB",
+  "cupy": "14.2.0"
+ },
+ "bitflip_A": [
+  {
+   "bit": 10,
+   "trials": 50,
+   "detected_row_rate": 0.0
+  },
+  {
+   "bit": 16,
+   "trials": 50,
+   "detected_row_rate": 0.0
+  },
+  {
+   "bit": 20,
+   "trials": 50,
+   "detected_row_rate": 0.0
+  },
+  {
+   "bit": 22,
+   "trials": 50,
+   "detected_row_rate": 1.0
+  },
+  {
+   "bit": 23,
+   "trials": 50,
+   "detected_row_rate": 1.0
+  },
+  {
+   "bit": 25,
+   "trials": 50,
+   "detected_row_rate": 1.0
+  },
+  {
+   "bit": 27,
+   "trials": 50,
+   "detected_row_rate": 1.0
+  },
+  {
+   "bit": 30,
+   "trials": 22,
+   "detected_row_rate": 1.0
+  }
+ ]
+}
